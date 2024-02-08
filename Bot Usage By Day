@@ -1,0 +1,55 @@
+-- WSOLAddress: 'So11111111111111111111111111111111111111112'
+-- FeeWallet: HEPL5rTb6n1Ax6jt9z2XMPFJcDe9bSWvWQpsK7AMcbZg
+-- FirstTradeTimestamp: TIMESTAMP '2023-11-10'
+WITH
+  botTradesWithFees AS (
+    SELECT
+      date_trunc('day', block_time) AS block_date,
+      type,
+      amount_usd,
+      fee_usd,
+      user,
+      project_contract_address,
+      tx_id
+    FROM
+      /* Sol Trading Bot Trades */
+      query_3312800
+    WHERE
+      isLastTradeInTransaction = true -- This prevents over counting for multi-hop trades and excludes tax distributions 
+  ),
+  firstUserOccurrences AS (
+    SELECT
+      user,
+      MIN(block_date) AS firstTradeDate
+    FROM
+      botTradesWithFees
+    GROUP BY
+      user
+  )
+SELECT
+  block_date,
+  SUM(amount_usd) AS totalVolumeUSD,
+  COUNT(DISTINCT (botTradesWithFees.user)) AS numberOfUsers,
+  COALESCE(COUNT(DISTINCT (firstUserOccurrences.user)), 0) AS numberOfNewUsers,
+  SUM(IF("type" = 'Buy', amount_usd, 0)) AS buyVolumeUSD,
+  SUM(IF("type" = 'Sell', amount_usd, 0)) AS sellVolumeUSD,
+  SUM(fee_usd) AS feesUSD,
+  COUNT(DISTINCT (tx_id)) AS numberOfTrades,
+  COUNT(DISTINCT (project_contract_address)) AS numberOfPairs,
+  COUNT(DISTINCT (botTradesWithFees.user)) - COALESCE(COUNT(DISTINCT (firstUserOccurrences.user)), 0) AS numberOfReturningUsers,
+  SUM(
+    COALESCE(COUNT(DISTINCT (firstUserOccurrences.user)), 0)
+  ) OVER (
+    ORDER BY
+      block_date
+  ) AS cumulative_numberOfNewUsers
+FROM
+  botTradesWithFees
+  LEFT OUTER JOIN firstUserOccurrences ON (
+    botTradesWithFees.user = firstUserOccurrences.user
+    AND botTradesWithFees.block_date = firstUserOccurrences.firstTradeDate
+  )
+GROUP BY
+  block_date
+ORDER BY
+  block_date DESC
